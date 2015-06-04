@@ -1,6 +1,6 @@
 ## Python GitLab
 
-python-gitlab is a Python module providing access to the GitLab server API.
+python-gitlab is a Python package providing access to the GitLab server API.
 
 It supports the v3 api of GitLab.
 
@@ -119,7 +119,7 @@ Get help with:
 gitlab --help
 
 # object help
-gitlab project help
+gitlab project --help
 `````
 
 Some examples:

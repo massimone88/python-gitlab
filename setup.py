@@ -2,15 +2,15 @@
 # -*- coding: utf-8 -*-
 
 from setuptools import setup
+from setuptools import find_packages
+
+import gitlab
+
 
 def get_version():
-    f = open('gitlab.py')
-    try:
-        for line in f:
-            if line.startswith('__version__'):
-                return eval(line.split('=')[-1])
-    finally:
-        f.close()
+
+    return gitlab.__version__
+
 
 setup(name='python-gitlab',
       version=get_version(),
@@ -20,9 +20,13 @@ setup(name='python-gitlab',
       author_email='gauvain@pocentek.net',
       license='LGPLv3',
       url='https://github.com/gpocentek/python-gitlab',
-      py_modules=['gitlab'],
-      scripts=['gitlab'],
+      packages=find_packages(),
       install_requires=['requests', 'six'],
+      entry_points={
+          'console_scripts': [
+              'gitlab = gitlab.cli:main'
+          ]
+      },
       classifiers=[
         'Development Status :: 5 - Production/Stable',
         'Environment :: Console',

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright (C) 2013-2014 Gauvain Pocentek <gauvain@pocentek.net>
+# Copyright (C) 2013-2015 Gauvain Pocentek <gauvain@pocentek.net>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License as published by
@@ -14,23 +14,26 @@
 #
 # You should have received a copy of the GNU Lesser General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
-""" Module for interfacing with GitLab-api """
-from __future__ import print_function, division, absolute_import
+"""Package for interfacing with GitLab-api """
+from __future__ import print_function
+from __future__ import division
+from __future__ import absolute_import
+import itertools
+import json
+import sys
+import warnings
 
+import requests
 import six
 
-import json
-import requests
-import sys
-
-from itertools import chain
-
 __title__ = 'python-gitlab'
-__version__ = '0.8.1'
+__version__ = '0.9'
 __author__ = 'Gauvain Pocentek'
 __email__ = 'gauvain@pocentek.net'
 __license__ = 'LGPL3'
-__copyright__ = 'Copyright 2013-2014 Gauvain Pocentek'
+__copyright__ = 'Copyright 2013-2015 Gauvain Pocentek'
+
+warnings.simplefilter('always', DeprecationWarning)
 
 
 class jsonEncoder(json.JSONEncoder):
@@ -101,11 +104,11 @@ class GitlabTransferProjectError(GitlabOperationError):
     pass
 
 
-def _raiseErrorFromResponse(response, error):
-    """ Tries to parse gitlab error message from response and raises error.
+def _raise_error_from_response(response, error):
+    """Tries to parse gitlab error message from response and raises error.
 
     If response status code is 401, raises instead GitlabAuthenticationError.
-    
+
     response: requests response object
     error: Error-class to raise. Should be inherited from GitLabError
     """
@@ -124,8 +127,8 @@ def _raiseErrorFromResponse(response, error):
 
 
 class Gitlab(object):
-    """ Represents a GitLab server connection
-    
+    """Represents a GitLab server connection
+
     Args:
         url (str): the URL of the Gitlab server
         private_token (str): the user private token
@@ -144,7 +147,7 @@ class Gitlab(object):
         self.timeout = timeout
         #: Headers that will be used in request to GitLab
         self.headers = {}
-        self.setToken(private_token)
+        self.set_token(private_token)
         #: the user email
         self.email = email
         #: the user password (associated with email)
@@ -153,8 +156,9 @@ class Gitlab(object):
         self.ssl_verify = ssl_verify
 
     def auth(self):
-        """Performs an authentication using either the private token, or the
-        email/password pair.
+        """Performs an authentication.
+
+        Uses either the private token, or the email/password pair.
 
         The user attribute will hold a CurrentUser object on success.
         """
@@ -168,23 +172,23 @@ class Gitlab(object):
             raise GitlabAuthenticationError("Missing email/password")
 
         data = json.dumps({'email': self.email, 'password': self.password})
-        r = self.rawPost('/session', data, content_type='application/json')
+        r = self._raw_post('/session', data, content_type='application/json')
 
         if r.status_code == 201:
             self.user = CurrentUser(self, r.json())
         else:
-            _raiseErrorFromResponse(r, GitlabAuthenticationError)
+            _raise_error_from_response(r, GitlabAuthenticationError)
 
-        self.setToken(self.user.private_token)
+        self.set_token(self.user.private_token)
 
     def token_auth(self):
         self.user = CurrentUser(self)
 
-    def setUrl(self, url):
-        """Updates the gitlab URL"""
+    def set_url(self, url):
+        """Updates the gitlab URL."""
         self._url = '%s/api/v3' % url
 
-    def constructUrl(self, id_, obj, parameters):
+    def _construct_url(self, id_, obj, parameters):
         args = _sanitize_dict(parameters)
         url = obj._url % args
         if id_ is not None:
@@ -193,7 +197,7 @@ class Gitlab(object):
             url = '%s%s' % (self._url, url)
         return url
 
-    def _createHeaders(self, content_type=None, headers={} ):
+    def _create_headers(self, content_type=None, headers={}):
         request_headers = self.headers.copy()
         request_headers.update(headers)
         if content_type is not None:
@@ -201,7 +205,13 @@ class Gitlab(object):
         return request_headers
 
     def setToken(self, token):
-        """Sets the private token for authentication"""
+        """(DEPRECATED) Sets the private token for authentication."""
+        warnings.warn("setToken is deprecated, use set_token instead",
+                      DeprecationWarning)
+        self.set_token(token)
+
+    def set_token(self, token):
+        """Sets the private token for authentication."""
         self.private_token = token if token else None
         if token:
             self.headers["PRIVATE-TOKEN"] = token
@@ -209,13 +219,24 @@ class Gitlab(object):
             del self.headers["PRIVATE-TOKEN"]
 
     def setCredentials(self, email, password):
-        """Sets the email/login and password for authentication"""
+        """(DEPRECATED) Sets the login and password for authentication."""
+        warnings.warn("setCredential is deprecated, use set_credentials "
+                      "instead",
+                      DeprecationWarning)
+        self.set_credentials(email, password)
+
+    def set_credentials(self, email, password):
+        """Sets the email/login and password for authentication."""
         self.email = email
         self.password = password
 
     def rawGet(self, path, content_type=None, **kwargs):
+        warnings.warn("rawGet is deprecated", DeprecationWarning)
+        return self._raw_get(path, content_type, **kwargs)
+
+    def _raw_get(self, path, content_type=None, **kwargs):
         url = '%s%s' % (self._url, path)
-        headers = self._createHeaders(content_type)
+        headers = self._create_headers(content_type)
 
         try:
             return requests.get(url,
@@ -223,38 +244,50 @@ class Gitlab(object):
                                 headers=headers,
                                 verify=self.ssl_verify,
                                 timeout=self.timeout)
-        except:
+        except Exception:
             raise GitlabConnectionError(
                 "Can't connect to GitLab server (%s)" % self._url)
 
     def rawPost(self, path, data=None, content_type=None, **kwargs):
+        warnings.warn("rawPost is deprecated", DeprecationWarning)
+        return self._raw_post(path, data, content_type, **kwargs)
+
+    def _raw_post(self, path, data=None, content_type=None, **kwargs):
         url = '%s%s' % (self._url, path)
-        headers = self._createHeaders(content_type)
+        headers = self._create_headers(content_type)
         try:
             return requests.post(url, params=kwargs, data=data,
                                  headers=headers,
                                  verify=self.ssl_verify,
                                  timeout=self.timeout)
-        except:
+        except Exception:
             raise GitlabConnectionError(
                 "Can't connect to GitLab server (%s)" % self._url)
 
     def rawPut(self, path, data=None, content_type=None, **kwargs):
+        warnings.warn("rawPut is deprecated", DeprecationWarning)
+        return self._raw_put(path, data, content_type, **kwargs)
+
+    def _raw_put(self, path, data=None, content_type=None, **kwargs):
         url = '%s%s' % (self._url, path)
-        headers = self._createHeaders(content_type)
+        headers = self._create_headers(content_type)
 
         try:
             return requests.put(url, data=data, params=kwargs,
                                 headers=headers,
                                 verify=self.ssl_verify,
                                 timeout=self.timeout)
-        except:
+        except Exception:
             raise GitlabConnectionError(
                 "Can't connect to GitLab server (%s)" % self._url)
 
     def rawDelete(self, path, content_type=None, **kwargs):
+        warnings.warn("rawDelete is deprecated", DeprecationWarning)
+        return self._raw_delete(path, content_type, **kwargs)
+
+    def _raw_delete(self, path, content_type=None, **kwargs):
         url = '%s%s' % (self._url, path)
-        headers = self._createHeaders(content_type)
+        headers = self._create_headers(content_type)
 
         try:
             return requests.delete(url,
@@ -262,22 +295,22 @@ class Gitlab(object):
                                    headers=headers,
                                    verify=self.ssl_verify,
                                    timeout=self.timeout)
-        except:
+        except Exception:
             raise GitlabConnectionError(
                 "Can't connect to GitLab server (%s)" % self._url)
 
     def list(self, obj_class, **kwargs):
         missing = []
-        for k in chain(obj_class.requiredUrlAttrs,
-                       obj_class.requiredListAttrs):
+        for k in itertools.chain(obj_class.requiredUrlAttrs,
+                                 obj_class.requiredListAttrs):
             if k not in kwargs:
                 missing.append(k)
         if missing:
             raise GitlabListError('Missing attribute(s): %s' %
                                   ", ".join(missing))
 
-        url = self.constructUrl(id_=None, obj=obj_class, parameters=kwargs)
-        headers = self._createHeaders()
+        url = self._construct_url(id_=None, obj=obj_class, parameters=kwargs)
+        headers = self._create_headers()
 
         # Remove attributes that are used in url so that there is only
         # url-parameters left
@@ -289,7 +322,7 @@ class Gitlab(object):
             r = requests.get(url, params=params, headers=headers,
                              verify=self.ssl_verify,
                              timeout=self.timeout)
-        except:
+        except Exception:
             raise GitlabConnectionError(
                 "Can't connect to GitLab server (%s)" % self._url)
 
@@ -309,23 +342,23 @@ class Gitlab(object):
                 if key in cls_kwargs:
                     del cls_kwargs[key]
 
-            return [cls(self, item, **cls_kwargs) for item in r.json() if item is not None]
+            return [cls(self, item, **cls_kwargs) for item in r.json()
+                    if item is not None]
         else:
-            _raiseErrorFromResponse(r, GitlabListError)
-
+            _raise_error_from_response(r, GitlabListError)
 
     def get(self, obj_class, id=None, **kwargs):
         missing = []
-        for k in chain(obj_class.requiredUrlAttrs,
-                       obj_class.requiredGetAttrs):
+        for k in itertools.chain(obj_class.requiredUrlAttrs,
+                                 obj_class.requiredGetAttrs):
             if k not in kwargs:
                 missing.append(k)
         if missing:
             raise GitlabGetError('Missing attribute(s): %s' %
                                  ", ".join(missing))
 
-        url = self.constructUrl(id_=id, obj=obj_class, parameters=kwargs)
-        headers = self._createHeaders()
+        url = self._construct_url(id_=id, obj=obj_class, parameters=kwargs)
+        headers = self._create_headers()
 
         # Remove attributes that are used in url so that there is only
         # url-parameters left
@@ -336,29 +369,29 @@ class Gitlab(object):
         try:
             r = requests.get(url, params=params, headers=headers,
                              verify=self.ssl_verify, timeout=self.timeout)
-        except:
+        except Exception:
             raise GitlabConnectionError(
                 "Can't connect to GitLab server (%s)" % self._url)
 
         if r.status_code == 200:
             return r.json()
         else:
-            _raiseErrorFromResponse(r, GitlabGetError)
-
+            _raise_error_from_response(r, GitlabGetError)
 
     def delete(self, obj, **kwargs):
         params = obj.__dict__.copy()
         params.update(kwargs)
         missing = []
-        for k in chain(obj.requiredUrlAttrs, obj.requiredDeleteAttrs):
+        for k in itertools.chain(obj.requiredUrlAttrs,
+                                 obj.requiredDeleteAttrs):
             if k not in params:
                 missing.append(k)
         if missing:
             raise GitlabDeleteError('Missing attribute(s): %s' %
                                     ", ".join(missing))
 
-        url = self.constructUrl(id_=obj.id, obj=obj, parameters=params)
-        headers = self._createHeaders()
+        url = self._construct_url(id_=obj.id, obj=obj, parameters=params)
+        headers = self._create_headers()
 
         # Remove attributes that are used in url so that there is only
         # url-parameters left
@@ -371,75 +404,77 @@ class Gitlab(object):
                                 headers=headers,
                                 verify=self.ssl_verify,
                                 timeout=self.timeout)
-        except:
+        except Exception:
             raise GitlabConnectionError(
                 "Can't connect to GitLab server (%s)" % self._url)
 
         if r.status_code == 200:
             return True
         else:
-            _raiseErrorFromResponse(r, GitlabDeleteError)
+            _raise_error_from_response(r, GitlabDeleteError)
 
     def create(self, obj, **kwargs):
         params = obj.__dict__.copy()
         params.update(kwargs)
         missing = []
-        for k in chain(obj.requiredUrlAttrs, obj.requiredCreateAttrs):
+        for k in itertools.chain(obj.requiredUrlAttrs,
+                                 obj.requiredCreateAttrs):
             if k not in params:
                 missing.append(k)
         if missing:
             raise GitlabCreateError('Missing attribute(s): %s' %
                                     ", ".join(missing))
 
-        url = self.constructUrl(id_=None, obj=obj, parameters=params)
-        headers = self._createHeaders(content_type="application/json")
+        url = self._construct_url(id_=None, obj=obj, parameters=params)
+        headers = self._create_headers(content_type="application/json")
 
         # build data that can really be sent to server
-        data = obj._dataForGitlab(extra_parameters=kwargs)
+        data = obj._data_for_gitlab(extra_parameters=kwargs)
 
         try:
             r = requests.post(url, data=data,
                               headers=headers,
                               verify=self.ssl_verify,
                               timeout=self.timeout)
-        except:
+        except Exception:
             raise GitlabConnectionError(
                 "Can't connect to GitLab server (%s)" % self._url)
 
         if r.status_code == 201:
             return r.json()
         else:
-            _raiseErrorFromResponse(r, GitlabCreateError)
+            _raise_error_from_response(r, GitlabCreateError)
 
     def update(self, obj, **kwargs):
         params = obj.__dict__.copy()
         params.update(kwargs)
         missing = []
-        for k in chain(obj.requiredUrlAttrs, obj.requiredCreateAttrs):
+        for k in itertools.chain(obj.requiredUrlAttrs,
+                                 obj.requiredCreateAttrs):
             if k not in params:
                 missing.append(k)
         if missing:
             raise GitlabUpdateError('Missing attribute(s): %s' %
                                     ", ".join(missing))
-        url = self.constructUrl(id_=obj.id, obj=obj, parameters=params)
-        headers = self._createHeaders(content_type="application/json")
+        url = self._construct_url(id_=obj.id, obj=obj, parameters=params)
+        headers = self._create_headers(content_type="application/json")
 
         # build data that can really be sent to server
-        data = obj._dataForGitlab(extra_parameters=kwargs)
+        data = obj._data_for_gitlab(extra_parameters=kwargs)
 
         try:
             r = requests.put(url, data=data,
                              headers=headers,
                              verify=self.ssl_verify,
                              timeout=self.timeout)
-        except:
+        except Exception:
             raise GitlabConnectionError(
                 "Can't connect to GitLab server (%s)" % self._url)
 
         if r.status_code == 200:
             return r.json()
         else:
-            _raiseErrorFromResponse(r, GitlabUpdateError)
+            _raise_error_from_response(r, GitlabUpdateError)
 
     def Hook(self, id=None, **kwargs):
         """Creates/tests/lists system hook(s) known by the GitLab server.
@@ -452,7 +487,7 @@ class Gitlab(object):
         object is NOT saved on the server. Use the save() method on the object
         to write it on the server.
         """
-        return Hook._getListOrObject(self, id, **kwargs)
+        return Hook._get_list_or_object(self, id, **kwargs)
 
     def Project(self, id=None, **kwargs):
         """Creates/gets/lists project(s) known by the GitLab server.
@@ -466,23 +501,25 @@ class Gitlab(object):
         object is NOT saved on the server. Use the save() method on the object
         to write it on the server.
         """
-        return Project._getListOrObject(self, id, **kwargs)
+        return Project._get_list_or_object(self, id, **kwargs)
 
     def UserProject(self, id=None, **kwargs):
         """Creates a project for a user.
 
         id must be a dict.
         """
-        return UserProject._getListOrObject(self, id, **kwargs)
+        return UserProject._get_list_or_object(self, id, **kwargs)
 
     def _list_projects(self, url, **kwargs):
-        r = self.rawGet(url, **kwargs)
+        r = self._raw_get(url, **kwargs)
         if r.status_code != 200:
-            _raiseErrorFromResponse(r, GitlabListError)
+            _raise_error_from_response(r, GitlabListError)
 
         l = []
         for o in r.json():
-            l.append(Project(self, o))
+            p = Project(self, o)
+            p._created = True
+            l.append(p)
 
         return l
 
@@ -510,11 +547,11 @@ class Gitlab(object):
                 returns the matching group (or raises a GitlabGetError if not
                 found).
             id: If id is a dict, creates a new object using attributes
-                provided. The object is NOT saved on the server. Use the 
+                provided. The object is NOT saved on the server. Use the
                 save() method on the object to write it on the server.
             kwargs: Arbitrary keyword arguments
         """
-        return Group._getListOrObject(self, id, **kwargs)
+        return Group._get_list_or_object(self, id, **kwargs)
 
     def Issue(self, id=None, **kwargs):
         """Lists issues(s) known by the GitLab server.
@@ -522,7 +559,7 @@ class Gitlab(object):
         Does not support creation or getting a single issue unlike other
         methods in this class yet.
         """
-        return Issue._getListOrObject(self, id, **kwargs)
+        return Issue._get_list_or_object(self, id, **kwargs)
 
     def User(self, id=None, **kwargs):
         """Creates/gets/lists users(s) known by the GitLab server.
@@ -536,7 +573,7 @@ class Gitlab(object):
         object is NOT saved on the server. Use the save() method on the object
         to write it on the server.
         """
-        return User._getListOrObject(self, id, **kwargs)
+        return User._get_list_or_object(self, id, **kwargs)
 
     def Team(self, id=None, **kwargs):
         """Creates/gets/lists team(s) known by the GitLab server.
@@ -550,7 +587,7 @@ class Gitlab(object):
         object is NOT saved on the server. Use the save() method on the object
         to write it on the server.
         """
-        return Team._getListOrObject(self, id, **kwargs)
+        return Team._get_list_or_object(self, id, **kwargs)
 
 
 def _get_display_encoding():
@@ -568,7 +605,7 @@ def _sanitize_dict(src):
 
 
 class GitlabObject(object):
-    """ Baseclass for all classes that interface with GitLab
+    """Base class for all classes that interface with GitLab
 
     Args:
         gl (gitlab.Gitlab): GitLab server connection
@@ -581,7 +618,7 @@ class GitlabObject(object):
     _url = None
     _returnClass = None
     _constructorTypes = None
-    #: Tells if _getListOrObject should return list or object when id is None
+    #: Whether _get_list_or_object should return list or object when id is None
     getListWhenNoId = True
 
     #: Tells if GitLab-api allows retrieving single objects
@@ -609,17 +646,16 @@ class GitlabObject(object):
     idAttr = 'id'
     shortPrintAttr = None
 
-    def _dataForGitlab(self, extra_parameters={}):
+    def _data_for_gitlab(self, extra_parameters={}):
         data = {}
-        for attribute in chain(self.requiredCreateAttrs,
-                               self.optionalCreateAttrs):
+        for attribute in itertools.chain(self.requiredCreateAttrs,
+                                         self.optionalCreateAttrs):
             if hasattr(self, attribute):
-                data[attribute] = getattr(self,attribute)
+                data[attribute] = getattr(self, attribute)
 
         data.update(extra_parameters)
 
         return json.dumps(data)
-
 
     @classmethod
     def list(cls, gl, **kwargs):
@@ -632,35 +668,35 @@ class GitlabObject(object):
         return gl.list(cls, **kwargs)
 
     @classmethod
-    def _getListOrObject(cls, gl, id, **kwargs):
+    def _get_list_or_object(cls, gl, id, **kwargs):
         if id is None and cls.getListWhenNoId:
             return cls.list(gl, **kwargs)
         else:
             return cls(gl, id, **kwargs)
 
-    def _getObject(self, k, v):
+    def _get_object(self, k, v):
         if self._constructorTypes and k in self._constructorTypes:
             return globals()[self._constructorTypes[k]](self.gitlab, v)
         else:
             return v
 
-    def _setFromDict(self, data):
+    def _set_from_dict(self, data):
         for k, v in data.items():
             if isinstance(v, list):
                 self.__dict__[k] = []
                 for i in v:
-                    self.__dict__[k].append(self._getObject(k, i))
+                    self.__dict__[k].append(self._get_object(k, i))
             elif v is None:
                 self.__dict__[k] = None
             else:
-                self.__dict__[k] = self._getObject(k, v)
+                self.__dict__[k] = self._get_object(k, v)
 
     def _create(self, **kwargs):
         if not self.canCreate:
             raise NotImplementedError
 
         json = self.gitlab.create(self, **kwargs)
-        self._setFromDict(json)
+        self._set_from_dict(json)
         self._created = True
 
     def _update(self, **kwargs):
@@ -668,7 +704,7 @@ class GitlabObject(object):
             raise NotImplementedError
 
         json = self.gitlab.update(self, **kwargs)
-        self._setFromDict(json)
+        self._set_from_dict(json)
 
     def save(self, **kwargs):
         if self._created:
@@ -689,15 +725,15 @@ class GitlabObject(object):
         self._created = False
         self.gitlab = gl
 
-        if data is None or isinstance(data, six.integer_types) or\
-                isinstance(data, six.string_types):
+        if (data is None or isinstance(data, six.integer_types) or
+           isinstance(data, six.string_types)):
             if not self.canGet:
                 raise NotImplementedError
             data = self.gitlab.get(self.__class__, data, **kwargs)
             # Object is created because we got it from api
             self._created = True
 
-        self._setFromDict(data)
+        self._set_from_dict(data)
 
         if kwargs:
             for k, v in kwargs.items():
@@ -707,7 +743,6 @@ class GitlabObject(object):
         # responses. Currently only Labels and Files
         if not hasattr(self, "id"):
             self.id = None
-
 
     def __str__(self):
         return '%s => %s' % (type(self), str(self.__dict__))
@@ -786,11 +821,10 @@ class User(GitlabObject):
                            'projects_limit', 'extern_uid', 'provider',
                            'bio', 'admin', 'can_create_group', 'website_url']
 
-
     def Key(self, id=None, **kwargs):
-        return UserKey._getListOrObject(self.gitlab, id,
-                                        user_id=self.id,
-                                        **kwargs)
+        return UserKey._get_list_or_object(self.gitlab, id,
+                                           user_id=self.id,
+                                           **kwargs)
 
 
 class CurrentUserKey(GitlabObject):
@@ -809,7 +843,8 @@ class CurrentUser(GitlabObject):
     shortPrintAttr = 'username'
 
     def Key(self, id=None, **kwargs):
-        return CurrentUserKey._getListOrObject(self.gitlab, id, **kwargs)
+        return CurrentUserKey._get_list_or_object(self.gitlab, id, **kwargs)
+
 
 class GroupMember(GitlabObject):
     _url = '/groups/%(group_id)s/members'
@@ -834,15 +869,16 @@ class Group(GitlabObject):
     OWNER_ACCESS = 50
 
     def Member(self, id=None, **kwargs):
-        return GroupMember._getListOrObject(self.gitlab, id,
-                                            group_id=self.id,
-                                            **kwargs)
+        return GroupMember._get_list_or_object(self.gitlab, id,
+                                               group_id=self.id,
+                                               **kwargs)
 
     def transfer_project(self, id, **kwargs):
         url = '/groups/%d/projects/%d' % (self.id, id)
-        r = self.gitlab.rawPost(url, None, **kwargs)
+        r = self.gitlab._raw_post(url, None, **kwargs)
         if r.status_code != 201:
-            _raiseErrorFromResponse(r, GitlabTransferProjectError)
+            _raise_error_from_response(r, GitlabTransferProjectError)
+
 
 class Hook(GitlabObject):
     _url = '/hooks'
@@ -876,7 +912,7 @@ class ProjectBranch(GitlabObject):
         url = self._url % {'project_id': self.project_id}
         action = 'protect' if protect else 'unprotect'
         url = "%s/%s/%s" % (url, self.name, action)
-        r = self.gitlab.rawPut(url, data=None, content_type=None, **kwargs)
+        r = self.gitlab._raw_put(url, data=None, content_type=None, **kwargs)
 
         if r.status_code == 200:
             if protect:
@@ -884,7 +920,7 @@ class ProjectBranch(GitlabObject):
             else:
                 del self.protected
         else:
-            _raiseErrorFromResponse(r, GitlabProtectError)
+            _raise_error_from_response(r, GitlabProtectError)
 
     def unprotect(self, **kwargs):
         self.protect(False, **kwargs)
@@ -901,22 +937,21 @@ class ProjectCommit(GitlabObject):
     def diff(self, **kwargs):
         url = ('/projects/%(project_id)s/repository/commits/%(commit_id)s/diff'
                % {'project_id': self.project_id, 'commit_id': self.id})
-        r = self.gitlab.rawGet(url, **kwargs)
+        r = self.gitlab._raw_get(url, **kwargs)
         if r.status_code == 200:
             return r.json()
         else:
-            _raiseErrorFromResponse(r, GitlabGetError)
-
+            _raise_error_from_response(r, GitlabGetError)
 
     def blob(self, filepath, **kwargs):
-        url = '/projects/%(project_id)s/repository/blobs/%(commit_id)s' % \
-              {'project_id': self.project_id, 'commit_id': self.id}
+        url = ('/projects/%(project_id)s/repository/blobs/%(commit_id)s' %
+               {'project_id': self.project_id, 'commit_id': self.id})
         url += '?filepath=%s' % filepath
-        r = self.gitlab.rawGet(url, **kwargs)
+        r = self.gitlab._raw_get(url, **kwargs)
         if r.status_code == 200:
             return r.content
         else:
-            _raiseErrorFromResponse(r, GitlabGetError)
+            _raise_error_from_response(r, GitlabGetError)
 
 
 class ProjectKey(GitlabObject):
@@ -967,21 +1002,22 @@ class ProjectIssue(GitlabObject):
 
     shortPrintAttr = 'title'
 
-    def _dataForGitlab(self, extra_parameters={}):
+    def _data_for_gitlab(self, extra_parameters={}):
         # Gitlab-api returns labels in a json list and takes them in a
         # comma separated list.
         if hasattr(self, "labels"):
-            if self.labels is not None and not isinstance(self.labels, six.string_types):
+            if (self.labels is not None and
+               not isinstance(self.labels, six.string_types)):
                 labels = ", ".join(self.labels)
                 extra_parameters['labels'] = labels
 
-        return super(ProjectIssue, self)._dataForGitlab(extra_parameters)
+        return super(ProjectIssue, self)._data_for_gitlab(extra_parameters)
 
     def Note(self, id=None, **kwargs):
-        return ProjectIssueNote._getListOrObject(self.gitlab, id,
-                                                 project_id=self.project_id,
-                                                 issue_id=self.id,
-                                                 **kwargs)
+        return ProjectIssueNote._get_list_or_object(self.gitlab, id,
+                                                    project_id=self.project_id,
+                                                    issue_id=self.id,
+                                                    **kwargs)
 
 
 class ProjectMember(GitlabObject):
@@ -1030,7 +1066,7 @@ class ProjectMergeRequest(GitlabObject):
     optionalCreateAttrs = ['assignee_id']
 
     def Note(self, id=None, **kwargs):
-        return ProjectMergeRequestNote._getListOrObject(
+        return ProjectMergeRequestNote._get_list_or_object(
             self.gitlab, id, project_id=self.project_id,
             merge_request_id=self.id, **kwargs)
 
@@ -1085,20 +1121,21 @@ class ProjectSnippet(GitlabObject):
     shortPrintAttr = 'title'
 
     def Content(self, **kwargs):
-        url = "/projects/%(project_id)s/snippets/%(snippet_id)s/raw" % \
-            {'project_id': self.project_id, 'snippet_id': self.id}
-        r = self.gitlab.rawGet(url, **kwargs)
+        url = ("/projects/%(project_id)s/snippets/%(snippet_id)s/raw" %
+               {'project_id': self.project_id, 'snippet_id': self.id})
+        r = self.gitlab._raw_get(url, **kwargs)
 
         if r.status_code == 200:
             return r.content
         else:
-            _raiseErrorFromResponse(r, GitlabGetError)
+            _raise_error_from_response(r, GitlabGetError)
 
     def Note(self, id=None, **kwargs):
-        return ProjectSnippetNote._getListOrObject(self.gitlab, id,
-                                                   project_id=self.project_id,
-                                                   snippet_id=self.id,
-                                                   **kwargs)
+        return ProjectSnippetNote._get_list_or_object(
+            self.gitlab, id,
+            project_id=self.project_id,
+            snippet_id=self.id,
+            **kwargs)
 
 
 class UserProject(GitlabObject):
@@ -1119,7 +1156,6 @@ class UserProject(GitlabObject):
 class Project(GitlabObject):
     _url = '/projects'
     _constructorTypes = {'owner': 'User', 'namespace': 'Group'}
-    canUpdate = False
     requiredCreateAttrs = ['name']
     optionalCreateAttrs = ['default_branch', 'issues_enabled', 'wall_enabled',
                            'merge_requests_enabled', 'wiki_enabled',
@@ -1129,106 +1165,106 @@ class Project(GitlabObject):
     shortPrintAttr = 'path'
 
     def Branch(self, id=None, **kwargs):
-        return ProjectBranch._getListOrObject(self.gitlab, id,
-                                              project_id=self.id,
-                                              **kwargs)
-
-    def Commit(self, id=None, **kwargs):
-        return ProjectCommit._getListOrObject(self.gitlab, id,
-                                              project_id=self.id,
-                                              **kwargs)
-
-    def Event(self, id=None, **kwargs):
-        return ProjectEvent._getListOrObject(self.gitlab, id,
-                                             project_id=self.id,
-                                             **kwargs)
-
-    def Hook(self, id=None, **kwargs):
-        return ProjectHook._getListOrObject(self.gitlab, id,
-                                            project_id=self.id,
-                                            **kwargs)
-
-    def Key(self, id=None, **kwargs):
-        return ProjectKey._getListOrObject(self.gitlab, id,
-                                           project_id=self.id,
-                                           **kwargs)
-
-    def Issue(self, id=None, **kwargs):
-        return ProjectIssue._getListOrObject(self.gitlab, id,
-                                             project_id=self.id,
-                                             **kwargs)
-
-    def Member(self, id=None, **kwargs):
-        return ProjectMember._getListOrObject(self.gitlab, id,
-                                              project_id=self.id,
-                                              **kwargs)
-
-    def MergeRequest(self, id=None, **kwargs):
-        return ProjectMergeRequest._getListOrObject(self.gitlab, id,
-                                                    project_id=self.id,
-                                                    **kwargs)
-
-    def Milestone(self, id=None, **kwargs):
-        return ProjectMilestone._getListOrObject(self.gitlab, id,
+        return ProjectBranch._get_list_or_object(self.gitlab, id,
                                                  project_id=self.id,
                                                  **kwargs)
 
-    def Note(self, id=None, **kwargs):
-        return ProjectNote._getListOrObject(self.gitlab, id,
-                                            project_id=self.id,
-                                            **kwargs)
+    def Commit(self, id=None, **kwargs):
+        return ProjectCommit._get_list_or_object(self.gitlab, id,
+                                                 project_id=self.id,
+                                                 **kwargs)
 
-    def Snippet(self, id=None, **kwargs):
-        return ProjectSnippet._getListOrObject(self.gitlab, id,
+    def Event(self, id=None, **kwargs):
+        return ProjectEvent._get_list_or_object(self.gitlab, id,
+                                                project_id=self.id,
+                                                **kwargs)
+
+    def Hook(self, id=None, **kwargs):
+        return ProjectHook._get_list_or_object(self.gitlab, id,
                                                project_id=self.id,
                                                **kwargs)
 
+    def Key(self, id=None, **kwargs):
+        return ProjectKey._get_list_or_object(self.gitlab, id,
+                                              project_id=self.id,
+                                              **kwargs)
+
+    def Issue(self, id=None, **kwargs):
+        return ProjectIssue._get_list_or_object(self.gitlab, id,
+                                                project_id=self.id,
+                                                **kwargs)
+
+    def Member(self, id=None, **kwargs):
+        return ProjectMember._get_list_or_object(self.gitlab, id,
+                                                 project_id=self.id,
+                                                 **kwargs)
+
+    def MergeRequest(self, id=None, **kwargs):
+        return ProjectMergeRequest._get_list_or_object(self.gitlab, id,
+                                                       project_id=self.id,
+                                                       **kwargs)
+
+    def Milestone(self, id=None, **kwargs):
+        return ProjectMilestone._get_list_or_object(self.gitlab, id,
+                                                    project_id=self.id,
+                                                    **kwargs)
+
+    def Note(self, id=None, **kwargs):
+        return ProjectNote._get_list_or_object(self.gitlab, id,
+                                               project_id=self.id,
+                                               **kwargs)
+
+    def Snippet(self, id=None, **kwargs):
+        return ProjectSnippet._get_list_or_object(self.gitlab, id,
+                                                  project_id=self.id,
+                                                  **kwargs)
+
     def Label(self, id=None, **kwargs):
-        return ProjectLabel._getListOrObject(self.gitlab, id,
-                                             project_id=self.id,
-                                             **kwargs)
+        return ProjectLabel._get_list_or_object(self.gitlab, id,
+                                                project_id=self.id,
+                                                **kwargs)
 
     def File(self, id=None, **kwargs):
-        return ProjectFile._getListOrObject(self.gitlab, id,
-                                            project_id=self.id,
-                                            **kwargs)
+        return ProjectFile._get_list_or_object(self.gitlab, id,
+                                               project_id=self.id,
+                                               **kwargs)
 
     def Tag(self, id=None, **kwargs):
-        return ProjectTag._getListOrObject(self.gitlab, id,
-                                           project_id=self.id,
-                                           **kwargs)
+        return ProjectTag._get_list_or_object(self.gitlab, id,
+                                              project_id=self.id,
+                                              **kwargs)
 
     def tree(self, path='', ref_name='', **kwargs):
         url = "%s/%s/repository/tree" % (self._url, self.id)
         url += '?path=%s&ref_name=%s' % (path, ref_name)
-        r = self.gitlab.rawGet(url, **kwargs)
+        r = self.gitlab._raw_get(url, **kwargs)
         if r.status_code == 200:
             return r.json()
         else:
-            _raiseErrorFromResponse(r, GitlabGetError)
+            _raise_error_from_response(r, GitlabGetError)
 
     def blob(self, sha, filepath, **kwargs):
         url = "%s/%s/repository/blobs/%s" % (self._url, self.id, sha)
         url += '?filepath=%s' % (filepath)
-        r = self.gitlab.rawGet(url, **kwargs)
+        r = self.gitlab._raw_get(url, **kwargs)
         if r.status_code == 200:
             return r.content
         else:
-            _raiseErrorFromResponse(r, GitlabGetError)
+            _raise_error_from_response(r, GitlabGetError)
 
     def archive(self, sha=None, **kwargs):
         url = '/projects/%s/repository/archive' % self.id
         if sha:
             url += '?sha=%s' % sha
-        r = self.gitlab.rawGet(url, **kwargs)
+        r = self.gitlab._raw_get(url, **kwargs)
         if r.status_code == 200:
             return r.content
         else:
-            _raiseErrorFromResponse(r, GitlabGetError)
+            _raise_error_from_response(r, GitlabGetError)
 
     def create_file(self, path, branch, content, message, **kwargs):
-        """ Creates file in project repository
-        
+        """Creates file in project repository
+
         Args:
             path (str): Full path to new file
             branch (str): The name of branch
@@ -1241,27 +1277,27 @@ class Project(GitlabObject):
             GitlabConnectionError: Connection to GitLab-server failed
         """
         url = "/projects/%s/repository/files" % self.id
-        url += "?file_path=%s&branch_name=%s&content=%s&commit_message=%s" % \
-            (path, branch, content, message)
-        r = self.gitlab.rawPost(url, data=None, content_type=None, **kwargs)
+        url += ("?file_path=%s&branch_name=%s&content=%s&commit_message=%s" %
+                (path, branch, content, message))
+        r = self.gitlab._raw_post(url, data=None, content_type=None, **kwargs)
         if r.status_code != 201:
-            _raiseErrorFromResponse(r, GitlabCreateError)
+            _raise_error_from_response(r, GitlabCreateError)
 
     def update_file(self, path, branch, content, message, **kwargs):
         url = "/projects/%s/repository/files" % self.id
-        url += "?file_path=%s&branch_name=%s&content=%s&commit_message=%s" % \
-            (path, branch, content, message)
-        r = self.gitlab.rawPut(url, data=None, content_type=None, **kwargs)
+        url += ("?file_path=%s&branch_name=%s&content=%s&commit_message=%s" %
+                (path, branch, content, message))
+        r = self.gitlab._raw_put(url, data=None, content_type=None, **kwargs)
         if r.status_code != 200:
-            _raiseErrorFromResponse(r, GitlabUpdateError)
+            _raise_error_from_response(r, GitlabUpdateError)
 
     def delete_file(self, path, branch, message, **kwargs):
         url = "/projects/%s/repository/files" % self.id
-        url += "?file_path=%s&branch_name=%s&commit_message=%s" % \
-            (path, branch, message)
-        r = self.gitlab.rawDelete(url, **kwargs)
+        url += ("?file_path=%s&branch_name=%s&commit_message=%s" %
+                (path, branch, message))
+        r = self.gitlab._raw_delete(url, **kwargs)
         if r.status_code != 200:
-            _raiseErrorFromResponse(r, GitlabDeleteError)
+            _raise_error_from_response(r, GitlabDeleteError)
 
 
 class TeamMember(GitlabObject):
@@ -1288,11 +1324,11 @@ class Team(GitlabObject):
     canUpdate = False
 
     def Member(self, id=None, **kwargs):
-        return TeamMember._getListOrObject(self.gitlab, id,
-                                           team_id=self.id,
-                                           **kwargs)
+        return TeamMember._get_list_or_object(self.gitlab, id,
+                                              team_id=self.id,
+                                              **kwargs)
 
     def Project(self, id=None, **kwargs):
-        return TeamProject._getListOrObject(self.gitlab, id,
-                                            team_id=self.id,
-                                            **kwargs)
+        return TeamProject._get_list_or_object(self.gitlab, id,
+                                               team_id=self.id,
+                                               **kwargs)
